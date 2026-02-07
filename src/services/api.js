@@ -2,8 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Configuration from your documentation
 export const API_CONFIG = {
-  BASE_URL: 'https://d1c37b7aa116.ngrok-free.app', // Active Ngrok URL
-  AUTH_URL: 'https://d1c37b7aa116.ngrok-free.app/api/auth/strava', // GET /api/auth/strava
+  BASE_URL: 'https://357f-103-59-135-103.ngrok-free.app', // Active Ngrok URL
+  AUTH_URL: 'https://357f-103-59-135-103.ngrok-free.app/api/auth/strava', // GET /api/auth/strava
 };
 
 // Helper to get headers with JWT

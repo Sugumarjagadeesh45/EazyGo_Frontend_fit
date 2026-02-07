@@ -6,7 +6,7 @@
 import { io, Socket } from 'socket.io-client';
 
 // Backend Socket URL - Update this with your actual backend URL
-const SOCKET_URL = 'https://d1c37b7aa116.ngrok-free.app';
+const SOCKET_URL = 'https://357f-103-59-135-103.ngrok-free.app';
 
 // Socket instance
 let socket: Socket | null = null;

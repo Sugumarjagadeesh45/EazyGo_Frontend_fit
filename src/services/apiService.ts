@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // API Configuration
 const API_CONFIG = {
   // Ngrok URL for live location/socket (update this when ngrok restarts)
-  NGROK_URL: 'https://d1c37b7aa116.ngrok-free.app',
+  NGROK_URL: 'https://357f-103-59-135-103.ngrok-free.app',
   // Local development URL
   LOCAL_URL: 'https://eazygo-strava-fit.onrender.com',
   // Weather API (OpenWeatherMap - free tier)
