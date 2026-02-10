@@ -43,6 +43,7 @@ cd ios && pod install && cd ..
 ### Navigation Structure
 The app uses React Navigation with a native stack navigator:
 - **FitnessMapScreen**: Main map screen with GPS tracking (entry point)
+- **ChallengesScreen**: Displays events and challenges (fetched from backend)
 
 ### Core Features
 1. **Real-time GPS Tracking**: Live location updates with smooth animations
@@ -50,12 +51,14 @@ The app uses React Navigation with a native stack navigator:
 3. **Animated Location Marker**: Professional blue dot with pulse animation
 4. **Polyline Routes**: Support for displaying workout routes
 5. **Smooth Animations**: Frame-based location interpolation for smooth marker movement
+6. **Events & Challenges**: View admin-created events and join them
 
 ## Key Files
 
 ### Core Application Files
 - [App.tsx](App.tsx): Navigation container (direct entry to map screen)
 - [src/FitnessMapScreen.tsx](src/FitnessMapScreen.tsx): Main fitness tracking map screen
+- [src/ChallengesScreen.tsx](src/ChallengesScreen.tsx): Events listing and details screen
 - [index.js](index.js): App entry point
 
 ### Map & Utilities
@@ -102,6 +105,53 @@ The app uses React Navigation with a native stack navigator:
 
 - **Pods**: Use `pod install` after dependency changes
 - **Permissions**: Location (WhenInUse) required
+
+## Backend API Integration
+
+### Configuration
+- **Base URL**: `http://<YOUR_IP>:5000` (Local) or Production URL
+- **API Prefix**: `/api`
+- **Image Handling**: Prepend Base URL to relative image paths returned by API
+
+### Events Management
+Events are managed by admins and displayed in the app.
+
+#### Get All Events
+- **Endpoint**: `GET /api/events`
+- **Usage**: Fetch and display in `ChallengesScreen`
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "events": [
+      {
+        "_id": "...",
+        "eventName": "Marathon 2023",
+        "eventBanner": "uploads/banner.jpg", // Needs Base URL prepended
+        "eventType": "running",
+        "startDate": "...",
+        "distance": 42
+      }
+    ]
+  }
+  ```
+
+#### Leaderboard
+- **Endpoint**: `GET /api/leaderboard`
+- **Params**: 
+  - `period`: `7days` | `30days` | `all`
+  - `activityType`: `Run` | `Ride` | `Swim` | `all`
+
+#### Troubleshooting
+1. **Empty Events**: Check `response.data.events` access.
+2. **Broken Images**: Ensure backend URL is prepended to banner paths.
+3. **Network**: Verify device can reach backend IP.
+
+### User Flows
+1. **Join Event**: 
+   - User views event in `ChallengesScreen`
+   - Clicks "Join"
+   - Triggers backend update and reflects in Admin Panel
 
 ## Development Notes
 

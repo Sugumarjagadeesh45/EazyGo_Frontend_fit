@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // API Configuration
 const API_CONFIG = {
   // Ngrok URL for live location/socket (update this when ngrok restarts)
-  NGROK_URL: 'https://357f-103-59-135-103.ngrok-free.app',
+  NGROK_URL: 'https://e45c-103-59-135-83.ngrok-free.app',
   // Local development URL
   LOCAL_URL: 'https://eazygo-strava-fit.onrender.com',
   // Weather API (OpenWeatherMap - free tier)
@@ -169,6 +169,27 @@ export interface ChallengesResponse {
   data: Challenge[];
 }
 
+// Award Types
+export interface Award {
+  _id: string;
+  eventName: string;
+  startDate: string;
+  eventDate: string;
+  startTime: string;
+  endTime: string;
+  eventBanner: string;
+  description: string;
+}
+
+// Top Performer Types
+export interface TopPerformer {
+  name: string;
+  avatar?: string;
+  totalDistance: number;
+  activityCount: number;
+  badge?: string;
+}
+
 // Weather Types
 export interface WeatherData {
   temperature: number;
@@ -309,18 +330,55 @@ export const apiService = {
   // ============ CHALLENGES ENDPOINTS ============
 
   getChallenges: async (): Promise<ChallengesResponse> => {
+    return await apiRequest('/api/events');
+  },
+
+  getMyChallenges: async (athleteId: number): Promise<ChallengesResponse> => {
+    return await apiRequest(`/api/my-challenges?athleteId=${athleteId}`, { silent: true });
+  },
+
+  joinChallenge: async (challengeId: string, athleteId: number): Promise<ApiResponse<null>> => {
+    return apiRequest(`/api/events/${challengeId}/join`, {
+      method: 'POST',
+      body: JSON.stringify({ athleteId }),
+      silent: true,
+    });
+  },
+
+  // ============ AWARDS ENDPOINTS ============
+  getAwards: async (): Promise<ApiResponse<Award[]>> => {
     try {
-      return await apiRequest('/api/challenges', { silent: true });
+      return await apiRequest('/api/awards');
     } catch {
-      // Return empty challenges if endpoint doesn't exist yet
       return { success: true, data: [] };
     }
   },
 
-  joinChallenge: async (challengeId: string): Promise<ApiResponse<null>> => {
-    return apiRequest(`/api/challenges/${challengeId}/join`, {
+  // ============ DASHBOARD & HEALTH ENDPOINTS ============
+
+  getHealthStats: async (athleteId: number): Promise<ApiResponse<any>> => {
+    return apiRequest(`/api/athlete/${athleteId}/health`, { silent: true });
+  },
+
+  updateHealthStats: async (athleteId: number, stats: any): Promise<ApiResponse<any>> => {
+    return apiRequest(`/api/athlete/${athleteId}/health`, {
       method: 'POST',
+      body: JSON.stringify(stats),
+      silent: true,
     });
+  },
+
+  createUserChallenge: async (challengeData: any): Promise<ApiResponse<any>> => {
+    return apiRequest('/api/user-challenges', {
+      method: 'POST',
+      body: JSON.stringify(challengeData),
+      silent: true,
+    });
+  },
+
+  getClubTopPerformer: async (): Promise<ApiResponse<TopPerformer[]>> => {
+    // Fetches today's top performer
+    return apiRequest('/api/club/top-performer', { silent: true });
   },
 
   // ============ WEATHER API ============

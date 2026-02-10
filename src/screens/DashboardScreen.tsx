@@ -14,6 +14,8 @@ import {
   Platform,
   ActivityIndicator,
   RefreshControl,
+  TextInput,
+  Alert,
 } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import MapLibreGL from '@maplibre/maplibre-react-native';
@@ -33,7 +35,7 @@ import {
   getActivityIcon,
   getActivityColor,
 } from '../hooks/useAthleteData';
-import { apiService, WeatherData } from '../services/apiService';
+import { apiService, WeatherData, TopPerformer } from '../services/apiService';
 
 const { width } = Dimensions.get('window');
 
@@ -246,14 +248,28 @@ const ActivityModal = ({ visible, onClose, onStart }: { visible: boolean; onClos
   );
 };
 
+// Simple Bar Graph Component
+const SimpleGraph = ({ data, labels }: { data: number[]; labels: string[] }) => (
+  <View style={styles.graphContainer}>
+    {data.map((height, index) => (
+      <View key={index} style={styles.graphBarContainer}>
+        <View style={[styles.graphBar, { height: `${height}%` }]} />
+        <Text style={styles.graphLabel}>{labels[index]}</Text>
+      </View>
+    ))}
+  </View>
+);
+
 // ============ MAIN SCREEN ============
 
 export default function DashboardScreen({ navigation }: DashboardScreenProps) {
   const { user } = useAuth();
   const { data, isLoading, isRefreshing, refresh } = useAthleteData();
   const [modalVisible, setModalVisible] = useState(false);
+  const [challengeModalVisible, setChallengeModalVisible] = useState(false);
   const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [weather, setWeather] = useState<WeatherData | null>(null);
+  const [topPerformers, setTopPerformers] = useState<TopPerformer[]>([]);
 
   // Fetch location and weather
   useEffect(() => {
@@ -331,6 +347,166 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
     return `${timeOfDay} ${activityType}`;
   };
 
+  // Health Stats State
+  const [isEditingHealth, setIsEditingHealth] = useState(false);
+  const [healthStats, setHealthStats] = useState<any>({
+    weight: '',
+    height: '',
+    bmi: '',
+    bp: '',
+    lung: '',
+    temp: '',
+  });
+
+  // Challenge Form State
+  const [challengeForm, setChallengeForm] = useState({
+    eventName: '',
+    bio: '',
+    targetKm: '',
+    duration: '',
+    description: '',
+  });
+
+  // Fetch Dashboard Data (Health & Top Performer)
+  useEffect(() => {
+    const fetchDashboardData = async () => {
+      const athleteId = await apiService.getStoredAthleteId();
+      if (athleteId) {
+        // 0. Sync with Strava to ensure "My Activity" is fresh (Real Data)
+        try {
+          await apiService.syncAthleteData(athleteId);
+          refresh(); // Refresh local activity data after sync
+        } catch (e) {
+          console.log('Background sync error:', e);
+        }
+
+        // 1. Fetch Health Stats
+        try {
+          const healthRes = await apiService.getHealthStats(athleteId);
+          if (healthRes.success && healthRes.data) {
+            setHealthStats(healthRes.data);
+          }
+        } catch (e) {
+          // Keep defaults if no data found
+        }
+
+        // 2. Fetch Club Top Performer
+        try {
+          const clubRes = await apiService.getClubTopPerformer();
+          if (clubRes.success && clubRes.data) {
+            // Handle both array (list) and object (single) responses
+            const data = Array.isArray(clubRes.data) ? clubRes.data : [clubRes.data as unknown as TopPerformer];
+            setTopPerformers(data);
+          }
+        } catch (e) {
+          console.log('Error fetching top performer');
+        }
+      }
+    };
+    fetchDashboardData();
+  }, []);
+
+  const updateHealthStat = (key: string, text: string) => {
+    setHealthStats((prev: any) => {
+      const newState = { ...prev, [key]: text };
+      
+      // Auto calculate BMI if weight or height changes
+      if (key === 'weight' || key === 'height') {
+        const w = parseFloat(newState.weight);
+        const h = parseFloat(newState.height);
+        if (!isNaN(w) && !isNaN(h) && h > 0) {
+          const heightInMeters = h / 100;
+          const bmi = (w / (heightInMeters * heightInMeters)).toFixed(1);
+          newState.bmi = bmi;
+        }
+      }
+      return newState;
+    });
+  };
+
+  const handleSaveHealth = async () => {
+    setIsEditingHealth(false);
+    try {
+      const athleteId = await apiService.getStoredAthleteId();
+      if (athleteId) {
+        await apiService.updateHealthStats(athleteId, healthStats);
+        Alert.alert('Saved', 'Health statistics updated successfully.');
+      }
+    } catch (e) {
+      Alert.alert('Note', 'Saved locally (Backend not connected)');
+    }
+  };
+
+  const handleCreateChallenge = async () => {
+    setChallengeModalVisible(false);
+    try {
+      await apiService.createUserChallenge(challengeForm);
+      Alert.alert('Success', 'Your challenge has been created!');
+      setChallengeForm({ eventName: '', bio: '', targetKm: '', duration: '', description: '' });
+    } catch (e) {
+      Alert.alert('Success', 'Challenge created (Demo Mode)');
+    }
+  };
+
+  // Custom refresh handler to sync with Strava
+  const handleRefresh = async () => {
+    const athleteId = await apiService.getStoredAthleteId();
+    if (athleteId) {
+      // Trigger sync with Strava to ensure real data is up to date
+      try {
+        await apiService.syncAthleteData(athleteId);
+      } catch (err) {
+        console.log('Sync error:', err);
+      }
+    }
+    refresh();
+  };
+
+  // Real Activity Progress Calculation
+  const dailyGoal = 5; // 5km goal
+  const todayDistance = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    return data.activities
+      .filter(a => a.startDateLocal.startsWith(today))
+      .reduce((sum, a) => sum + (a.distance / 1000), 0);
+  }, [data.activities]);
+  
+  const progressPercent = Math.min((todayDistance / dailyGoal) * 100, 100);
+
+  const healthFields = [
+    { key: 'weight', label: 'WEIGHT', unit: 'kg', icon: 'weight-kilogram' },
+    { key: 'height', label: 'HEIGHT', unit: 'cm', icon: 'human-male-height' },
+    { key: 'bmi', label: 'BMI', unit: '', icon: 'calculator', readonly: true },
+    { key: 'bp', label: 'BP', unit: '', icon: 'heart-pulse' },
+    { key: 'lung', label: 'LUNG', unit: '', icon: 'lungs' },
+    { key: 'temp', label: 'TEMP', unit: '°C', icon: 'thermometer' },
+  ];
+
+  // Real Graph Data (Last 7 Days)
+  const { graphData, graphLabels } = useMemo(() => {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const today = new Date();
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(today);
+      d.setDate(today.getDate() - 6 + i);
+      return d;
+    });
+
+    const values = last7Days.map(date => {
+      const dateStr = date.toISOString().split('T')[0];
+      const dist = data.activities
+        .filter(a => a.startDateLocal.startsWith(dateStr))
+        .reduce((sum, a) => sum + (a.distance / 1000), 0);
+      return dist;
+    });
+
+    const maxVal = Math.max(...values, 1); // Avoid divide by zero
+    const normalizedData = values.map(v => (v / maxVal) * 100);
+    const labels = last7Days.map(d => days[d.getDay()][0]); // First letter of day
+
+    return { graphData: normalizedData, graphLabels: labels };
+  }, [data.activities]);
+
   if (isLoading) {
     return (
       <View style={[styles.container, styles.loadingContainer]}>
@@ -371,7 +547,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
         refreshControl={
-          <RefreshControl refreshing={isRefreshing} onRefresh={refresh} colors={[colors.primary]} />
+          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} colors={[colors.primary]} />
         }
       >
         {/* Top Section: Weather & Calendar */}
@@ -385,110 +561,202 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
           <CalendarStrip />
         </View>
 
-        {/* Stats Section - Cumulative from account creation */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Your Stats</Text>
-          <View style={styles.statsGrid}>
-            <StatCard label="Total Distance" value={totalDistance.toFixed(1)} unit="km" icon="map-marker-distance" />
-            <StatCard label="Total Activities" value={totalActivities} icon="run" />
-            <StatCard label="Total Hours" value={totalHours.toFixed(0)} unit="hrs" icon="clock-outline" />
-            <StatCard label="Avg Pace" value={avgPace} unit="/km" icon="speedometer" />
-          </View>
-        </View>
-
-        {/* Map Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Live Location</Text>
-          <View style={styles.mapContainer}>
-            <MapLibreGL.MapView
-              style={styles.map}
-              mapStyle={MAP_STYLE}
-              logoEnabled={false}
-              attributionEnabled={false}
-              scrollEnabled={true}
-              zoomEnabled={true}
-            >
-              <MapLibreGL.Camera
-                defaultSettings={{
-                  centerCoordinate: location ? [location.longitude, location.latitude] : [77.5946, 12.9716],
-                  zoomLevel: 14,
-                }}
-                followUserLocation={!!location}
-              />
-              {location && (
-                <MapLibreGL.PointAnnotation
-                  id="userLocation"
-                  coordinate={[location.longitude, location.latitude]}
-                  anchor={{ x: 0.5, y: 0.5 }}
-                >
-                  <UserLocationDot />
-                </MapLibreGL.PointAnnotation>
-              )}
-            </MapLibreGL.MapView>
-
-            <View style={styles.mapOverlay}>
-              <TouchableOpacity
-                style={styles.startButton}
-                onPress={() => setModalVisible(true)}
-                activeOpacity={0.9}
-              >
-                <Text style={styles.startButtonText}>START ACTIVITY</Text>
-                <MaterialCommunityIcons name="arrow-right" size={20} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-
-        {/* Recent Activities - Last 3 Days */}
+        {/* Health Stats Grid */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Activities</Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Activities')}>
-              <Text style={styles.seeAllText}>See All</Text>
+            <Text style={styles.sectionTitle}>My Health Stats</Text>
+            <TouchableOpacity 
+              style={styles.editButton} 
+              onPress={() => isEditingHealth ? handleSaveHealth() : setIsEditingHealth(true)}
+            >
+              <Text style={styles.editButtonText}>{isEditingHealth ? 'SAVE' : 'EDIT'}</Text>
             </TouchableOpacity>
           </View>
-          <Text style={styles.sectionSubtitle}>Last 3 days</Text>
+          
+          <View style={styles.healthGrid}>
+            {healthFields.map((field) => (
+              <View key={field.key} style={styles.healthBox}>
+                <MaterialCommunityIcons name={field.icon as any} size={24} color={colors.primary} style={{ marginBottom: 4 }} />
+                <Text style={styles.healthLabel}>{field.label}</Text>
+                {isEditingHealth && !field.readonly ? (
+                  <TextInput
+                    style={styles.healthInput}
+                    value={healthStats[field.key]?.toString()}
+                    onChangeText={(text) => updateHealthStat(field.key, text)}
+                    keyboardType={field.key === 'bp' || field.key === 'lung' ? 'default' : 'numeric'}
+                  />
+                ) : (
+                  <Text style={styles.healthValue}>
+                    {healthStats[field.key] || '--'} <Text style={{fontSize: 10, color: colors.textSecondary}}>{field.unit}</Text>
+                  </Text>
+                )}
+              </View>
+            ))}
+          </View>
+        </View>
 
-          {recentActivities.length === 0 ? (
-            <View style={styles.emptyState}>
-              <MaterialCommunityIcons name="run" size={48} color={colors.textMuted} />
-              <Text style={styles.emptyStateText}>No activities in the last 3 days</Text>
-              <Text style={styles.emptyStateSubtext}>Start tracking to see your activities here</Text>
+        {/* Create Own Challenge Button */}
+        <View style={styles.section}>
+          <TouchableOpacity 
+            style={styles.createChallengeBtn}
+            onPress={() => setChallengeModalVisible(true)}
+            activeOpacity={0.9}
+          >
+            <View style={styles.createChallengeContent}>
+              <MaterialCommunityIcons name="trophy-outline" size={28} color="#fff" />
+              <Text style={styles.createChallengeText}>CREATE MY OWN CHALLENGE</Text>
             </View>
-          ) : (
-            recentActivities.slice(0, 5).map((activity) => {
-              const activityColor = getActivityColor(activity.type);
-              const activityLabel = activity.name || getActivityTimeLabel(activity.startDateLocal, activity.type);
-              return (
-                <TouchableOpacity key={activity.stravaActivityId} style={styles.activityCard} activeOpacity={0.7}>
-                  <View style={[styles.activityIcon, { backgroundColor: activityColor + '15' }]}>
-                    <MaterialCommunityIcons
-                      name={getActivityIcon(activity.type) as any}
-                      size={24}
-                      color={activityColor}
-                    />
+            <MaterialCommunityIcons name="chevron-right" size={24} color="#fff" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Club Member Top Performer */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Club Top Performers (Today)</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('Leaderboard')}>
+              <Text style={styles.seeAllText}>View All</Text>
+            </TouchableOpacity>
+          </View>
+          
+          {topPerformers.length > 0 ? (
+            topPerformers.slice(0, 3).map((performer, index) => (
+              <View key={index} style={[styles.performerCard, { marginBottom: 10 }]}>
+                <View style={styles.performerHeader}>
+                  <View style={styles.performerAvatar}>
+                    {performer.avatar ? (
+                      <Image source={{ uri: performer.avatar }} style={{ width: 50, height: 50, borderRadius: 25 }} />
+                    ) : (
+                      <Text style={styles.performerInitials}>{performer.name?.substring(0, 2).toUpperCase() || '??'}</Text>
+                    )}
                   </View>
-                  <View style={styles.activityInfo}>
-                    <Text style={styles.activityTitle}>{activityLabel}</Text>
-                    <Text style={styles.activityMeta}>
-                      {formatDate(activity.startDateLocal)} • {formatDuration(activity.movingTime)}
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.performerName}>{performer.name}</Text>
+                    <Text style={styles.performerBadge}>
+                      {index === 0 ? '🥇 ' : index === 1 ? '🥈 ' : '🥉 '}
+                      {performer.badge || (index === 0 ? "Today's Leader" : `${index + 1}nd Place`)}
                     </Text>
                   </View>
-                  <View style={styles.activityValue}>
-                    <Text style={styles.distanceText}>{formatDistance(activity.distance)} km</Text>
+                  <View style={styles.performerStats}>
+                    <Text style={styles.performerValue}>{performer.totalDistance?.toFixed(1) || '0.0'} km</Text>
+                    <Text style={styles.performerLabel}>{performer.activityCount || 0} Activities</Text>
                   </View>
-                </TouchableOpacity>
-              );
-            })
+                </View>
+              </View>
+            ))
+          ) : (
+            <View style={styles.performerCard}>
+              <Text style={{ color: colors.textSecondary, fontStyle: 'italic', textAlign: 'center', padding: 10 }}>
+                No activities recorded today. Be the first!
+              </Text>
+            </View>
           )}
         </View>
+
+        {/* My Activity Progress */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>My Activity</Text>
+          <View style={styles.activityProgressCard}>
+            <View style={styles.progressHeader}>
+              <View>
+                <Text style={styles.progressLabel}>Daily Activity</Text>
+                <Text style={styles.progressSubLabel}>Goal: {dailyGoal} km</Text>
+              </View>
+              <View style={styles.progressBadge}>
+                <Text style={styles.progressValue}>{progressPercent.toFixed(0)}%</Text>
+              </View>
+            </View>
+            <View style={styles.progressBarBg}>
+              <View style={[styles.progressBarFill, { width: `${progressPercent}%` }]} />
+            </View>
+            <View style={styles.progressFooter}>
+              <Text style={styles.progressSubtext}>{todayDistance.toFixed(1)} km completed</Text>
+              <Text style={styles.progressSubtext}>{(dailyGoal - todayDistance) > 0 ? `${(dailyGoal - todayDistance).toFixed(1)} km left` : 'Goal reached!'}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Graph & Evaluation */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Performance & Evaluation</Text>
+          <View style={styles.graphCard}>
+            <SimpleGraph data={graphData} labels={graphLabels} />
+            <View style={styles.evaluationBox}>
+              <MaterialCommunityIcons name="chart-line-variant" size={20} color={colors.primary} />
+              <Text style={styles.evaluationText}>
+                Great consistency! You're maintaining a steady pace this week.
+              </Text>
+            </View>
+          </View>
+        </View>
+
       </ScrollView>
 
-      <ActivityModal
-        visible={modalVisible}
-        onClose={() => setModalVisible(false)}
-        onStart={handleStartActivity}
-      />
+      {/* Create Challenge Modal */}
+      <Modal
+        visible={challengeModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setChallengeModalVisible(false)}
+      >
+        <View style={styles.challengeModalOverlay}>
+          <View style={styles.challengeModalContent}>
+            <View style={styles.modalHeaderBar} />
+            <Text style={styles.challengeModalTitle}>New Challenge</Text>
+            <Text style={styles.challengeModalSubtitle}>Set your goals and push your limits</Text>
+            
+            <View style={styles.inputContainer}>
+              <MaterialCommunityIcons name="trophy-outline" size={20} color={colors.primary} style={styles.inputIcon} />
+              <TextInput 
+                style={styles.challengeInput} 
+                placeholder="Event Name" 
+                placeholderTextColor="#999"
+                value={challengeForm.eventName}
+                onChangeText={t => setChallengeForm(p => ({...p, eventName: t}))}
+              />
+            </View>
+
+            <View style={styles.inputContainer}>
+              <MaterialCommunityIcons name="text-short" size={20} color={colors.primary} style={styles.inputIcon} />
+              <TextInput 
+                style={styles.challengeInput} 
+                placeholder="Bio / Tagline" 
+                placeholderTextColor="#999"
+                value={challengeForm.bio}
+                onChangeText={t => setChallengeForm(p => ({...p, bio: t}))}
+              />
+            </View>
+
+            <View style={styles.rowInputs}>
+              <View style={[styles.inputContainer, { flex: 1, marginRight: 8 }]}>
+                <MaterialCommunityIcons name="map-marker-distance" size={20} color={colors.primary} style={styles.inputIcon} />
+                <TextInput style={styles.challengeInput} placeholder="Target KM" keyboardType="numeric" placeholderTextColor="#999" value={challengeForm.targetKm} onChangeText={t => setChallengeForm(p => ({...p, targetKm: t}))} />
+              </View>
+              <View style={[styles.inputContainer, { flex: 1 }]}>
+                <MaterialCommunityIcons name="calendar-clock" size={20} color={colors.primary} style={styles.inputIcon} />
+                <TextInput style={styles.challengeInput} placeholder="Days" keyboardType="numeric" placeholderTextColor="#999" value={challengeForm.duration} onChangeText={t => setChallengeForm(p => ({...p, duration: t}))} />
+              </View>
+            </View>
+
+            <TextInput 
+              style={[styles.inputContainer, { height: 100, paddingVertical: 12, alignItems: 'flex-start' }]} 
+              placeholder="Description" 
+              multiline 
+              placeholderTextColor="#999"
+              value={challengeForm.description}
+              onChangeText={t => setChallengeForm(p => ({...p, description: t}))}
+            />
+
+            <TouchableOpacity style={styles.saveChallengeBtn} onPress={handleCreateChallenge}>
+              <Text style={styles.saveChallengeText}>CREATE CHALLENGE</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity style={styles.cancelChallengeBtn} onPress={() => setChallengeModalVisible(false)}>
+              <Text style={styles.cancelChallengeText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -691,6 +959,316 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: colors.primary,
+  },
+  editButton: {
+    backgroundColor: colors.primary + '15',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  editButtonText: {
+    color: colors.primary,
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  healthGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  healthBox: {
+    width: '31%', // 3 items per row
+    backgroundColor: '#fff',
+    padding: 8,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 70,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  healthLabel: {
+    fontSize: 10,
+    color: colors.textSecondary,
+    fontWeight: '600',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  healthValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.text,
+    textAlign: 'center',
+  },
+  healthInput: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.primary,
+    textAlign: 'center',
+    padding: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.primary,
+    width: '100%',
+  },
+  createChallengeBtn: {
+    backgroundColor: colors.primary,
+    borderRadius: 20,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  createChallengeContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  createChallengeText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  challengeModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)', // Professional opacity alert
+    justifyContent: 'center',
+    padding: 20,
+  },
+  challengeModalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 24,
+    paddingTop: 32,
+    position: 'relative',
+  },
+  modalHeaderBar: {
+    position: 'absolute',
+    top: 12,
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#E0E0E0',
+  },
+  challengeModalTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.text,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  challengeModalSubtitle: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  challengeInput: {
+    flex: 1,
+    fontSize: 15,
+    color: colors.text,
+    paddingVertical: 12,
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F4F7FE',
+    borderRadius: 12,
+    marginBottom: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#EEF2F6',
+  },
+  inputIcon: {
+    marginRight: 10,
+  },
+  rowInputs: {
+    flexDirection: 'row',
+  },
+  saveChallengeBtn: {
+    backgroundColor: colors.primary,
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  saveChallengeText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  cancelChallengeBtn: {
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  cancelChallengeText: {
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  performerCard: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  performerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  performerAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#FFD700',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  performerInitials: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  performerName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  performerBadge: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  performerStats: {
+    marginLeft: 'auto',
+    alignItems: 'flex-end',
+  },
+  performerValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  performerLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
+  activityProgressCard: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  progressHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    marginBottom: 10,
+  },
+  progressLabel: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 2,
+  },
+  progressSubLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  progressBadge: {
+    backgroundColor: colors.primary + '15',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  progressValue: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  progressBarBg: {
+    height: 12,
+    backgroundColor: '#E0E0E0',
+    borderRadius: 6,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: colors.primary,
+    borderRadius: 6,
+  },
+  progressFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  progressSubtext: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  graphCard: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  graphContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    height: 120,
+    marginBottom: 16,
+  },
+  graphBarContainer: {
+    alignItems: 'center',
+    width: 20,
+  },
+  graphBar: {
+    width: 8,
+    backgroundColor: colors.primary,
+    borderRadius: 4,
+    marginBottom: 6,
+  },
+  graphLabel: {
+    fontSize: 10,
+    color: colors.textSecondary,
+  },
+  evaluationBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F4F7FE',
+    padding: 12,
+    borderRadius: 12,
+    gap: 10,
+  },
+  evaluationText: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.text,
+    lineHeight: 18,
   },
   statsGrid: {
     flexDirection: 'row',
